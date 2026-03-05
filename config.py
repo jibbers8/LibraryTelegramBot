@@ -23,6 +23,8 @@ def _parse_int_list(value: str) -> list[int]:
 class AppConfig:
     telegram_bot_token: str
     telegram_allowed_chat_ids: list[int]
+    telegram_command_password: str
+    telegram_unlock_minutes: int
     telegram_poll_interval: float
     browser_headless: bool
     browser_interactive_mode: bool
@@ -35,6 +37,8 @@ class AppConfig:
         return cls(
             telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", "").strip(),
             telegram_allowed_chat_ids=_parse_int_list(os.getenv("TELEGRAM_ALLOWED_CHAT_IDS", "")),
+            telegram_command_password=os.getenv("TELEGRAM_COMMAND_PASSWORD", "").strip(),
+            telegram_unlock_minutes=int(os.getenv("TELEGRAM_UNLOCK_MINUTES", "60")),
             telegram_poll_interval=float(os.getenv("TELEGRAM_POLL_INTERVAL", "1.0")),
             browser_headless=_parse_bool(os.getenv("BROWSER_HEADLESS"), False),
             browser_interactive_mode=_parse_bool(os.getenv("BROWSER_INTERACTIVE_MODE"), False),

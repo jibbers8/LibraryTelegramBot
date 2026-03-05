@@ -80,6 +80,8 @@ class BookingAutomation:
         self.interactive_mode = interactive_mode
         self.keep_browser_open = keep_browser_open
         self.close_existing_browsers = close_existing_browsers
+        self.invalid_credentials_detected = False
+        self.recurring_failed_dates: list[str] = []
 
     def _update_status(self, message: str):
         self.status_callback(message)
@@ -149,6 +151,22 @@ class BookingAutomation:
             return
         self._update_status(f"Non-interactive mode: {prompt_text} (skipped)")
 
+    def _detect_invalid_credentials(self, prefix: str = "") -> bool:
+        page_text = (self.driver.page_source or "").lower()
+        invalid_signals = [
+            "you entered an invalid netid or password",
+            "invalid netid",
+            "invalid password",
+        ]
+        if any(signal in page_text for signal in invalid_signals):
+            self.invalid_credentials_detected = True
+            self._update_status(
+                f"{prefix}Detected invalid university credentials. "
+                "Stored login session is no longer usable and needs re-authentication."
+            )
+            return True
+        return False
+
     def _set_date(self, date: datetime):
         date_str_iso = date.strftime("%Y-%m-%d")
         self._update_status(f"Setting date to {date.strftime('%m/%d/%Y')}...")
@@ -191,11 +209,17 @@ class BookingAutomation:
             )
 
             page_text = self.driver.page_source.lower()
-            if "no results available" in page_text or "sorry" in page_text:
-                if not self.accept_similar_times:
-                    self._update_status("Exact time not available. Similar times disabled - skipping.")
-                    return []
-                self._update_status("Exact time not available. Booking similar-time room...")
+            no_exact_match = (
+                "we are sorry but there are no results available for the selected date & time" in page_text
+                or "we are sorry but there are no results available for the selected date and time" in page_text
+                or "no matches for" in page_text
+            )
+            if no_exact_match:
+                self._update_status("Exact requested date/time has no available rooms.")
+                if "available at other times" in page_text:
+                    self._update_status("Similar-time listings were shown, but booking is skipped by rule.")
+                self._update_status("Stopping without booking because exact time was unavailable.")
+                return []
 
             book_buttons = self.driver.find_elements(By.CSS_SELECTOR, ".s-lc-suggestion-book-now")
             self._update_status(f"Found {len(book_buttons)} available room(s)!")
@@ -308,6 +332,9 @@ class BookingAutomation:
 
             if self._handle_login_if_needed(prefix):
                 time.sleep(2)
+                if self.invalid_credentials_detected:
+                    self._update_status(f"{prefix}Stopping booking because stored credentials are invalid.")
+                    return False
 
             for _ in range(3):
                 if self.complete_booking():
@@ -324,6 +351,8 @@ class BookingAutomation:
 
     def _handle_login_if_needed(self, prefix: str = "") -> bool:
         page_source = self.driver.page_source.lower()
+        if self._detect_invalid_credentials(prefix):
+            return True
         if not any(kw in page_source for kw in ["sign in", "log in", "netid", "webauth"]):
             return False
 
@@ -343,18 +372,24 @@ class BookingAutomation:
                 self._update_status(f"{prefix}Clicking '{login_btn.text or 'Login'}' button...")
                 login_btn.click()
                 time.sleep(3)
+                self._detect_invalid_credentials(prefix)
                 return True
             except (TimeoutException, NoSuchElementException):
                 continue
 
         self._update_status("Please click Login manually, then press Enter...")
         self._wait_for_user_confirmation("")
+        self._detect_invalid_credentials(prefix)
         return True
 
     def book_room(self, request: BookingRequest) -> bool:
         try:
+            self.invalid_credentials_detected = False
+            self.recurring_failed_dates = []
             self.start_browser()
             self._update_status("Skipping LibCal home page. Starting from direct search URL.")
+            if self.invalid_credentials_detected:
+                return False
 
             if request.dates:
                 return self._book_recurring(request)
@@ -379,14 +414,28 @@ class BookingAutomation:
         for i, d in enumerate(request.dates, 1):
             self._update_status(f"  {i}. {d.strftime('%A, %B %d, %Y')}")
 
-        successful = sum(
-            1 for i, booking_date in enumerate(request.dates, 1)
-            if self._book_single_date(request, booking_date, f"{i}/{total}") or not time.sleep(2)
-        )
+        successful = 0
+        failed_dates: list[str] = []
+        for i, booking_date in enumerate(request.dates, 1):
+            label = f"{i}/{total}"
+            date_label = booking_date.strftime("%A, %B %d, %Y")
+            booked = self._book_single_date(request, booking_date, label)
+            if booked:
+                successful += 1
+            else:
+                failed_dates.append(date_label)
+                self._update_status(f"[{label}] Skipped {date_label} and continued with remaining dates.")
+            time.sleep(2)
 
         self._update_status(f"\nBOOKING SUMMARY: {successful}/{total} successful")
+        if failed_dates:
+            self.recurring_failed_dates = failed_dates[:]
+            self._update_status("Unbooked dates:")
+            for date_label in failed_dates:
+                self._update_status(f"  - {date_label}")
+            self._update_status("Continuing behavior: failed dates are skipped; remaining dates are still attempted.")
         self._wait_for_user_confirmation("Press Enter to close the browser...")
-        return successful == total
+        return successful > 0
 
 
 if __name__ == "__main__":

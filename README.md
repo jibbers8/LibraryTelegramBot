@@ -29,12 +29,16 @@ The project now supports:
 2. Fill in:
    - `TELEGRAM_BOT_TOKEN`
    - `TELEGRAM_ALLOWED_CHAT_IDS` (comma-separated numeric IDs)
+   - Optional password gate:
+     - `TELEGRAM_COMMAND_PASSWORD`
+     - `TELEGRAM_UNLOCK_MINUTES` (default `60`)
 3. Start bot:
    ```bash
    python main.py --telegram
    ```
 4. In Telegram:
    - `/start`
+   - `/unlock your-password` (if password gate enabled)
    - `/book room for 4 people on Tuesday around 4pm`
    - `/status`
 

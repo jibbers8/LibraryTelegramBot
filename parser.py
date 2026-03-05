@@ -83,6 +83,7 @@ class NaturalLanguageParser:
         'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10,
         'eleven': 11, 'twelve': 12
     }
+    WEEKDAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
 
     def parse(self, text: str) -> BookingRequest:
         request = BookingRequest()
@@ -143,6 +144,21 @@ class NaturalLanguageParser:
         return []
 
     def _extract_date(self, text: str) -> Optional[datetime]:
+        text_lower = text.lower()
+        today = datetime.now()
+
+        this_match = re.search(r'\bthis\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b', text_lower)
+        if this_match:
+            target_weekday = self.WEEKDAYS.index(this_match.group(1))
+            days_until = (target_weekday - today.weekday()) % 7
+            return (today + timedelta(days=days_until)).replace(hour=0, minute=0, second=0, microsecond=0)
+
+        next_match = re.search(r'\bnext\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b', text_lower)
+        if next_match:
+            target_weekday = self.WEEKDAYS.index(next_match.group(1))
+            days_until = (target_weekday - today.weekday()) % 7
+            return (today + timedelta(days=days_until + 7)).replace(hour=0, minute=0, second=0, microsecond=0)
+
         date_patterns = [
             r'\b(today|tomorrow|tonight)\b',
             r'\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b',
@@ -163,10 +179,10 @@ class NaturalLanguageParser:
             'PREFER_DATES_FROM': 'future',
             'PREFER_DAY_OF_MONTH': 'first',
             'RETURN_AS_TIMEZONE_AWARE': False,
-            'RELATIVE_BASE': datetime.now().replace(hour=0, minute=0, second=0, microsecond=0),
+            'RELATIVE_BASE': today.replace(hour=0, minute=0, second=0, microsecond=0),
         })
 
-        if parsed and parsed.date() < datetime.now().date():
+        if parsed and parsed.date() < today.date():
             parsed += timedelta(days=7)
         return parsed
 

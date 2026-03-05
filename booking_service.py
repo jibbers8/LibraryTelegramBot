@@ -1,6 +1,6 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Callable
 
 from browser import BookingAutomation
 from parser import NaturalLanguageParser, BookingRequest
@@ -15,6 +15,7 @@ class BookingResult:
     started_at: datetime
     finished_at: datetime
     status_lines: list[str]
+    skipped_dates: list[str] = field(default_factory=list)
     error: Optional[str] = None
 
     @property
@@ -28,12 +29,17 @@ class BookingResult:
 
     def to_telegram_message(self) -> str:
         recent = "\n".join(f"- {line}" for line in self.status_lines[-8:]) if self.status_lines else "- No status messages"
+        skipped = ""
+        if self.skipped_dates:
+            skipped_list = "\n".join(f"- {date_text}" for date_text in self.skipped_dates)
+            skipped = f"\n\nSkipped dates:\n{skipped_list}"
         return (
             f"{'[SUCCESS]' if self.success else '[WARNING]'} {self.summary()}\n\n"
             f"Request:\n{self.request}\n\n"
             f"Duration: {self.duration_seconds:.1f}s\n"
             f"Started: {self.started_at.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
             f"Recent status:\n{recent}"
+            f"{skipped}"
         )
 
 
@@ -51,6 +57,7 @@ class BookingService:
         keep_browser_open: bool,
         close_existing_browsers: bool,
         accept_similar_times: bool,
+        progress_callback: Optional[Callable[[str], None]] = None,
     ) -> BookingResult:
         request = self.parser.parse(request_text)
         status_lines: list[str] = []
@@ -58,6 +65,11 @@ class BookingService:
 
         def capture_status(message: str):
             status_lines.append(message)
+            if progress_callback:
+                try:
+                    progress_callback(message)
+                except Exception:
+                    pass
 
         success = False
         error = None
@@ -90,6 +102,7 @@ class BookingService:
             started_at=started_at,
             finished_at=finished_at,
             status_lines=status_lines,
+            skipped_dates=getattr(automation, "recurring_failed_dates", []) if 'automation' in locals() else [],
             error=error,
         )
         self._notify(result)
