@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -18,14 +19,40 @@ class TelegramBookingBot:
         self.service = BookingService()
         self.last_result: Optional[BookingResult] = None
         self.unlocked_chats: dict[int, datetime] = {}
+        self.repo_root = Path(__file__).resolve().parent
+        self.state_dir = self.repo_root / "state"
+        self.approved_chats_path = self.state_dir / "approved_chats.json"
+        self.approved_chats = self._load_approved_chats()
+
+    def _load_approved_chats(self) -> set[int]:
+        try:
+            if not self.approved_chats_path.exists():
+                return set()
+            data = json.loads(self.approved_chats_path.read_text(encoding="utf-8"))
+            if not isinstance(data, list):
+                return set()
+            return {int(chat_id) for chat_id in data}
+        except Exception:
+            return set()
+
+    def _save_approved_chats(self):
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        self.approved_chats_path.write_text(
+            json.dumps(sorted(self.approved_chats), indent=2),
+            encoding="utf-8",
+        )
 
     def _is_authorized(self, chat_id: int) -> bool:
+        if chat_id in self.approved_chats:
+            return True
         allowed = self.config.telegram_allowed_chat_ids
         if not allowed:
             return True
         return chat_id in allowed
 
     def _is_password_unlocked(self, chat_id: int) -> bool:
+        if chat_id in self.approved_chats:
+            return True
         if not self.config.telegram_command_password:
             return True
         expires_at = self.unlocked_chats.get(chat_id)
@@ -68,11 +95,10 @@ class TelegramBookingBot:
         if provided != self.config.telegram_command_password:
             await update.message.reply_text("Incorrect password.")
             return
-        expires_at = datetime.now() + timedelta(minutes=self.config.telegram_unlock_minutes)
-        self.unlocked_chats[chat_id] = expires_at
-        await update.message.reply_text(
-            f"Unlocked for {self.config.telegram_unlock_minutes} minute(s)."
-        )
+        self.approved_chats.add(chat_id)
+        self._save_approved_chats()
+        self.unlocked_chats.pop(chat_id, None)
+        await update.message.reply_text("Unlocked permanently for this chat.")
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.effective_chat is None:
@@ -114,7 +140,9 @@ class TelegramBookingBot:
             "- For recurring requests, unavailable dates are skipped and listed in the result.\n\n"
             "Maintenance commands:\n"
             "- /version: show current git commit\n"
-            "- /update: pull latest GitHub changes and restart bot"
+            "- /update: pull latest GitHub changes and restart bot\n\n"
+            "Password behavior:\n"
+            "- /unlock is permanent per chat once successful"
         )
 
     async def version(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
