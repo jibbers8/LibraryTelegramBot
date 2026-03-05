@@ -223,6 +223,24 @@ class BookingAutomation:
         self._update_status("No rooms with windows found, using first available room.")
         return rooms[0]
 
+    def _is_booking_confirmed(self) -> bool:
+        current_url = (self.driver.current_url or "").lower()
+        page_text = (self.driver.page_source or "").lower()
+        return (
+            "booking confirmed" in page_text
+            or "booking confirmed" in current_url
+            or "reservation confirmed" in page_text
+            or "reservation confirmed" in current_url
+        )
+
+    def _wait_for_booking_confirmation(self, timeout_seconds: int = 12) -> bool:
+        end_time = time.time() + timeout_seconds
+        while time.time() < end_time:
+            if self._is_booking_confirmed():
+                return True
+            time.sleep(1)
+        return self._is_booking_confirmed()
+
     def complete_booking(self) -> bool:
         self._update_status("Completing booking...")
         time.sleep(2)
@@ -244,12 +262,14 @@ class BookingAutomation:
                 submit_btn = WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable((by, selector)))
                 self._update_status(f"Clicking '{submit_btn.text or submit_btn.get_attribute('value') or 'button'}'...")
                 submit_btn.click()
-                time.sleep(3)
-                return True
+                if self._wait_for_booking_confirmation():
+                    self._update_status("Booking Confirmed page detected.")
+                    return True
+                self._update_status("Submit clicked, but Booking Confirmed page was not detected.")
             except (TimeoutException, NoSuchElementException):
                 continue
 
-        self._update_status("Could not find submit button. Please complete booking manually.")
+        self._update_status("Could not confirm booking. Booking Confirmed page was not reached.")
         return False
 
     def _book_single_date(self, request: BookingRequest, booking_date, date_label: str = "") -> bool:
@@ -282,8 +302,8 @@ class BookingAutomation:
                     return True
                 time.sleep(2)
 
-            self._update_status(f"{prefix}Booking initiated for {date_str} - please verify.")
-            return True
+            self._update_status(f"{prefix}Booking failed for {date_str}: Booking Confirmed page was not reached.")
+            return False
 
         except Exception as e:
             self._update_status(f"{prefix}Error booking for {date_str}: {e}")
