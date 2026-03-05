@@ -1,4 +1,7 @@
 import asyncio
+import os
+import subprocess
+from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -83,6 +86,8 @@ class TelegramBookingBot:
             "/unlock <password> (if password lock is enabled)\n"
             "/book <request text>\n"
             "/status\n"
+            "/version\n"
+            "/update\n"
             "/help"
         )
 
@@ -106,8 +111,52 @@ class TelegramBookingBot:
             "/book group room for 6 students tomorrow at 4pm\n\n"
             "Notes:\n"
             "- Bot books only if exact requested time has availability.\n"
-            "- For recurring requests, unavailable dates are skipped and listed in the result."
+            "- For recurring requests, unavailable dates are skipped and listed in the result.\n\n"
+            "Maintenance commands:\n"
+            "- /version: show current git commit\n"
+            "- /update: pull latest GitHub changes and restart bot"
         )
+
+    async def version(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._require_auth(update):
+            return
+        repo_root = Path(__file__).resolve().parent
+        try:
+            commit = subprocess.check_output(
+                ["git", "rev-parse", "--short", "HEAD"],
+                cwd=repo_root,
+                text=True,
+            ).strip()
+            await update.message.reply_text(f"Current version: {commit}")
+        except Exception as exc:
+            await update.message.reply_text(f"Could not read version: {exc}")
+
+    async def update(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._require_auth(update):
+            return
+        repo_root = Path(__file__).resolve().parent
+        await update.message.reply_text("Checking for updates from GitHub...")
+        try:
+            pull_result = subprocess.run(
+                ["git", "pull"],
+                cwd=repo_root,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            output = (pull_result.stdout or "") + (pull_result.stderr or "")
+            output = output.strip() or "(no output)"
+            if pull_result.returncode != 0:
+                await update.message.reply_text(f"Update failed:\n{output}")
+                return
+            if "Already up to date." in output:
+                await update.message.reply_text("Already up to date.")
+                return
+            await update.message.reply_text(f"Update applied:\n{output}\n\nRestarting bot now...")
+            await asyncio.sleep(1)
+            os._exit(0)
+        except Exception as exc:
+            await update.message.reply_text(f"Update failed: {exc}")
 
     async def status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self._require_auth(update):
@@ -175,6 +224,8 @@ class TelegramBookingBot:
         application.add_handler(CommandHandler("start", self.start))
         application.add_handler(CommandHandler("help", self.help))
         application.add_handler(CommandHandler("unlock", self.unlock))
+        application.add_handler(CommandHandler("version", self.version))
+        application.add_handler(CommandHandler("update", self.update))
         application.add_handler(CommandHandler("status", self.status))
         application.add_handler(CommandHandler("book", self.book))
         return application
