@@ -70,6 +70,14 @@ class BookingService:
                 keep_browser_open=keep_browser_open,
                 close_existing_browsers=close_existing_browsers,
             )
+            preview_params = automation._build_search_params(request)
+            capture_status(
+                "Computed search params -> "
+                f"capacity={preview_params.get('capacity')} "
+                f"start={preview_params.get('start', 'default')} "
+                f"end={preview_params.get('end', 'default')} "
+                f"date={preview_params.get('date', 'default')}"
+            )
             success = automation.book_room(request)
         except Exception as exc:
             error = str(exc)

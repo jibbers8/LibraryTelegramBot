@@ -36,7 +36,10 @@ class BookingAutomation:
                 return val
         return "4"
 
-    def _build_search_url(self, request, date_override=None) -> str:
+    def _format_time_param(self, hour: int, minute: int = 0) -> str:
+        return f"{hour:02d}:{minute:02d}"
+
+    def _build_search_params(self, request, date_override=None) -> dict:
         params = {"m": "t", "lid": "801", "gid": "1389", "zone": "0",
                   "capacity": self._get_capacity_value(request.capacity)}
 
@@ -48,14 +51,17 @@ class BookingAutomation:
             params["date"] = booking_date.strftime("%Y-%m-%d")
 
         if request.start_hour is not None and request.end_hour is not None:
-            params["start"] = f"{request.start_hour:02d}:00"
-            params["end"] = f"{request.end_hour:02d}:00"
+            params["start"] = self._format_time_param(request.start_hour, getattr(request, "start_minute", 0))
+            params["end"] = self._format_time_param(request.end_hour, getattr(request, "end_minute", 0))
         elif request.target_hour is not None:
-            params["start"] = f"{max(0, request.target_hour - 1):02d}:00"
-            params["end"] = f"{min(23, request.target_hour + 1):02d}:00"
+            params["start"] = self._format_time_param(max(0, request.target_hour - 1), getattr(request, "target_minute", 0))
+            params["end"] = self._format_time_param(min(23, request.target_hour + 1), getattr(request, "target_minute", 0))
         elif request.time_preference and request.time_preference in self.TIME_RANGES:
             params["start"], params["end"] = self.TIME_RANGES[request.time_preference]
+        return params
 
+    def _build_search_url(self, request, date_override=None) -> str:
+        params = self._build_search_params(request, date_override=date_override)
         return f"{self.BASE_URL}/r/search?{urlencode(params)}"
 
     def __init__(
@@ -277,7 +283,14 @@ class BookingAutomation:
         date_str = booking_date.strftime("%A, %B %d")
 
         self._update_status(f"{prefix}Booking for {date_str}...")
-        self.driver.get(self._build_search_url(request, date_override=booking_date))
+        search_params = self._build_search_params(request, date_override=booking_date)
+        self._update_status(
+            f"{prefix}Search params -> date={search_params.get('date')} "
+            f"capacity={search_params.get('capacity')} "
+            f"start={search_params.get('start', 'default')} "
+            f"end={search_params.get('end', 'default')}"
+        )
+        self.driver.get(f"{self.BASE_URL}/r/search?{urlencode(search_params)}")
         time.sleep(3)
 
         rooms = self.find_available_rooms(request)
@@ -341,14 +354,7 @@ class BookingAutomation:
     def book_room(self, request: BookingRequest) -> bool:
         try:
             self.start_browser()
-            self._update_status("Checking login status...")
-            self.driver.get(self.BASE_URL)
-            time.sleep(2)
-
-            if self._handle_login_if_needed():
-                self._update_status("Please log in using the Chrome window, then press Enter...")
-                self._wait_for_user_confirmation("")
-                time.sleep(2)
+            self._update_status("Skipping LibCal home page. Starting from direct search URL.")
 
             if request.dates:
                 return self._book_recurring(request)

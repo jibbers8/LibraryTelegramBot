@@ -11,14 +11,17 @@ class BookingRequest:
         self.dates: list[datetime] = []
         self.time_preference: Optional[str] = None
         self.target_hour: Optional[int] = None
+        self.target_minute: int = 0
         self.start_hour: Optional[int] = None
+        self.start_minute: int = 0
         self.end_hour: Optional[int] = None
+        self.end_minute: int = 0
         self.room_type: Optional[str] = None
         self.floor: Optional[int] = None
         self.duration_hours: int = 1
 
-    def _format_hour(self, hour: int) -> str:
-        return f"{hour % 12 or 12}:00 {'AM' if hour < 12 else 'PM'}"
+    def _format_hour(self, hour: int, minute: int = 0) -> str:
+        return f"{hour % 12 or 12}:{minute:02d} {'AM' if hour < 12 else 'PM'}"
 
     def __str__(self) -> str:
         parts = []
@@ -30,9 +33,12 @@ class BookingRequest:
         elif self.date:
             parts.append(f"Date: {self.date.strftime('%A, %B %d, %Y')}")
         if self.start_hour is not None and self.end_hour is not None:
-            parts.append(f"Time: {self._format_hour(self.start_hour)} to {self._format_hour(self.end_hour)}")
+            parts.append(
+                f"Time: {self._format_hour(self.start_hour, self.start_minute)} "
+                f"to {self._format_hour(self.end_hour, self.end_minute)}"
+            )
         elif self.target_hour is not None:
-            parts.append(f"Time: around {self._format_hour(self.target_hour)}")
+            parts.append(f"Time: around {self._format_hour(self.target_hour, self.target_minute)}")
         elif self.time_preference:
             parts.append(f"Time: {self.time_preference}")
         if self.room_type:
@@ -89,9 +95,9 @@ class NaturalLanguageParser:
 
         time_result, time_pref = self._extract_time(text_lower)
         if time_pref == "range" and isinstance(time_result, tuple):
-            request.start_hour, request.end_hour = time_result
-        else:
-            request.target_hour = time_result
+            (request.start_hour, request.start_minute), (request.end_hour, request.end_minute) = time_result
+        elif isinstance(time_result, tuple):
+            request.target_hour, request.target_minute = time_result
             request.time_preference = time_pref
 
         request.room_type = self._extract_room_type(text_lower)
@@ -164,25 +170,33 @@ class NaturalLanguageParser:
             parsed += timedelta(days=7)
         return parsed
 
-    def _parse_single_time(self, time_str: str) -> Optional[int]:
+    def _parse_single_time(self, time_str: str) -> Optional[tuple[int, int]]:
         match = re.search(r'(\d{1,2})(?::(\d{2}))?\s*(am|pm)?', time_str.strip().lower())
         if not match:
             return None
         hour = int(match.group(1))
+        minute = int(match.group(2) or 0)
+        if minute > 59:
+            return None
         ampm = match.group(3)
+        if ampm and (hour < 1 or hour > 12):
+            return None
+        if not ampm and hour > 23:
+            return None
         if ampm == 'pm' and hour != 12:
             hour += 12
         elif ampm == 'am' and hour == 12:
             hour = 0
         elif not ampm and 1 <= hour <= 7:
             hour += 12
-        return hour
+        return hour, minute
 
-    def _extract_time(self, text: str) -> tuple[Optional[int], Optional[str]]:
+    def _extract_time(self, text: str):
+        time_fragment = r'\d{1,2}(?::\d{2})?\s*(?:am|pm)?'
         range_patterns = [
-            r'from\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\s+to\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)',
-            r'between\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\s+and\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)',
-            r'(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\s*[-]s*(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)',
+            rf'from\s+({time_fragment})\s+to\s+({time_fragment})',
+            rf'between\s+({time_fragment})\s+and\s+({time_fragment})',
+            rf'\b({time_fragment})\s*(?:to|-)\s*({time_fragment})\b',
         ]
 
         for pattern in range_patterns:
@@ -192,22 +206,22 @@ class NaturalLanguageParser:
                 if start is not None and end is not None:
                     return (start, end), "range"
 
-        for pattern in self.TIME_PATTERNS:
-            match = re.search(pattern, text)
+        single_patterns = [
+            r'(?:around|at)\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)',
+            r'\b(\d{1,2}(?::\d{2})?\s*(?:am|pm))\b',
+            r'\b(\d{1,2}(?::\d{2}))\b',
+        ]
+
+        for pattern in single_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
             if match:
-                hour = int(match.group(1))
-                ampm = match.group(2).lower() if len(match.groups()) > 1 and match.group(2) else None
-                if ampm == 'pm' and hour != 12:
-                    hour += 12
-                elif ampm == 'am' and hour == 12:
-                    hour = 0
-                elif not ampm and 1 <= hour <= 7:
-                    hour += 12
-                return hour, None
+                parsed = self._parse_single_time(match.group(1))
+                if parsed is not None:
+                    return parsed, None
 
         for period, (start, end) in self.TIME_OF_DAY.items():
             if period in text:
-                return (start + end) // 2, period
+                return ((start + end) // 2, 0), period
 
         return None, None
 
