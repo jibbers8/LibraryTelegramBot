@@ -82,16 +82,31 @@ class TelegramBookingBot:
             "Use:\n"
             "/unlock <password> (if password lock is enabled)\n"
             "/book <request text>\n"
-            "/status"
+            "/status\n"
+            "/help"
         )
 
     async def help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self._require_auth(update):
             return
         await update.message.reply_text(
+            "How to use /book:\n"
+            "- /book <natural-language request>\n\n"
+            "Supported notation:\n"
+            "- People: 'for 4 people', 'group of 6'\n"
+            "- Date: 'today', 'tomorrow', 'this tuesday', 'next tuesday', 'March 14'\n"
+            "- Recurring: 'next 4 tuesdays', 'every tuesday for 4 weeks'\n"
+            "- Time range: 'from 8pm to 10pm', 'between 10am and 2pm', '8pm-10pm'\n"
+            "- Single time: 'at 4pm', 'around 2:30pm', 'friday afternoon'\n"
+            "- Room type: 'quiet', 'group', 'video conference', 'presentation'\n"
+            "- Floor: 'on the 3rd floor'\n\n"
             "Examples:\n"
-            "/book room for 4 people tomorrow at 4pm\n"
-            "/book quiet study room on friday afternoon"
+            "/book room for 4 people from 8pm to 10pm this tuesday\n"
+            "/book quiet study room next 4 tuesdays from 6pm to 8pm\n"
+            "/book group room for 6 students tomorrow at 4pm\n\n"
+            "Notes:\n"
+            "- Bot books only if exact requested time has availability.\n"
+            "- For recurring requests, unavailable dates are skipped and listed in the result."
         )
 
     async def status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
