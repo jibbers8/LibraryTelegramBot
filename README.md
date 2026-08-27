@@ -40,7 +40,27 @@ The project now supports:
    - `/start`
    - `/unlock your-password` (if password gate enabled)
    - `/book room for 4 people on Tuesday around 4pm`
+   - `/book for 8 people today 5pm to 9pm AND book tomorrow 3pm to 6pm`
    - `/status`
+
+## Compound Booking Requests
+
+The Telegram bot accepts multiple independent booking requests in a single
+`/book` command when they are separated with uppercase `AND`:
+```text
+/book for 8 people today 5pm to 9pm AND book for 8 people tomorrow 3pm to 6pm
+```
+
+Each clause is parsed and booked separately, in order. Later clauses inherit
+missing shared context from the previous clause, such as capacity, room type,
+floor, and duration. For example, the second clause here inherits `8 people`:
+```text
+/book for 8 people today 5pm to 9pm AND book tomorrow 3pm to 6pm
+```
+
+Lowercase `and` is only treated as a separator when the next clause starts with
+a booking verb like `book`, `reserve`, `get`, or `grab`, so ordinary phrases
+such as `between 10am and 2pm` still parse as one booking request.
 
 ## Room Continuation Preference
 
