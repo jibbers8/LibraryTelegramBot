@@ -50,8 +50,8 @@ class RoomContinuationTests(unittest.TestCase):
             }
         ])
         rooms = [
-            {"name": "Room B540", "description": ""},
-            {"name": "Room B539", "description": ""},
+            {"name": "Room B540", "description": "window natural light"},
+            {"name": "Room B539", "description": "window natural light"},
             {"name": "Room C539", "description": "window natural light"},
         ]
 
@@ -59,7 +59,7 @@ class RoomContinuationTests(unittest.TestCase):
 
         self.assertEqual(selected["name"], "Room B539")
 
-    def test_continuation_prefers_nearby_room_before_window_room(self):
+    def test_continuation_prefers_nearby_room_among_window_rooms(self):
         self._write_history([
             {
                 "booked_at": "2026-03-06T17:00:00",
@@ -72,6 +72,45 @@ class RoomContinuationTests(unittest.TestCase):
         rooms = [
             {"name": "Room B560", "description": ""},
             {"name": "Room C539", "description": "window natural light"},
+            {"name": "Room B538", "description": "window natural light"},
+        ]
+
+        selected = self.automation._select_preferred_room(rooms, self._request(), self.booking_date)
+
+        self.assertEqual(selected["name"], "Room B538")
+
+    def test_continuation_does_not_prioritize_non_window_room_over_window_room(self):
+        self._write_history([
+            {
+                "booked_at": "2026-03-06T17:00:00",
+                "date": "2026-03-06",
+                "start": "17:00",
+                "end": "21:00",
+                "room_name": "Room B539",
+            }
+        ])
+        rooms = [
+            {"name": "Room B539", "description": ""},
+            {"name": "Room B538", "description": ""},
+            {"name": "Room C539", "description": "window natural light"},
+        ]
+
+        selected = self.automation._select_preferred_room(rooms, self._request(), self.booking_date)
+
+        self.assertEqual(selected["name"], "Room C539")
+
+    def test_continuation_can_use_non_window_room_when_no_window_rooms_exist(self):
+        self._write_history([
+            {
+                "booked_at": "2026-03-06T17:00:00",
+                "date": "2026-03-06",
+                "start": "17:00",
+                "end": "21:00",
+                "room_name": "Room B539",
+            }
+        ])
+        rooms = [
+            {"name": "Room C539", "description": ""},
             {"name": "Room B538", "description": ""},
         ]
 

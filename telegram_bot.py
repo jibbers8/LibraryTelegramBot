@@ -139,7 +139,7 @@ class TelegramBookingBot:
             "- Bot books only if exact requested time has availability.\n"
             "- For recurring requests, unavailable dates are skipped and listed in the result.\n\n"
             "Room preference:\n"
-            "- Later same-day requests prefer continuing in the same room, then nearby rooms.\n\n"
+            "- Later same-day requests prefer the same/nearby room only when it also matches the normal window preference.\n\n"
             "Maintenance commands:\n"
             "- /version: show current git commit\n"
             "- /update: pull latest GitHub changes and restart bot\n\n"

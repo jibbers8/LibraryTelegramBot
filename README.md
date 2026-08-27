@@ -48,10 +48,12 @@ After a successful booking, the bot records the date, time, and room in
 `state/recent_bookings.json`. On a later request for the same day that starts
 at or after a prior booking ends, the room selector treats it as a natural
 continuation:
-- Try the exact same room first.
+- If rooms with windows/natural light are available, only prioritize
+  continuation rooms that also have windows/natural light.
+- Within that preferred set, try the exact same room first.
 - If unavailable, try nearby rooms with the same room prefix and floor, within
-  5 room numbers. For example, after `B539`, prefer `B538` or `B540` before
-  unrelated qualifying rooms.
+  5 room numbers. For example, after `B539`, prefer qualifying `B538` or
+  `B540` before unrelated qualifying rooms.
 - If no same or nearby room is available, fall back to the normal preference
   for rooms with windows/natural light, then the first qualifying room.
 

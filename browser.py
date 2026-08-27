@@ -349,15 +349,17 @@ class BookingAutomation:
         if not rooms:
             return None
 
+        window_rooms = [r for r in rooms if self._is_window_room(r)]
+        continuation_pool = window_rooms or rooms
+
         if request is not None and booking_date is not None:
             previous = self._find_continuation_booking(request, booking_date)
             if previous:
                 previous_room_name = previous.get("room_name", "")
                 ranked = sorted(
-                    enumerate(rooms),
+                    enumerate(continuation_pool),
                     key=lambda item: (
                         *self._rank_continuation_room(item[1], previous_room_name),
-                        0 if self._is_window_room(item[1]) else 1,
                         item[0],
                     ),
                 )
@@ -368,13 +370,13 @@ class BookingAutomation:
                     )
                     return ranked[0][1]
                 self._update_status(
-                    f"No same or nearby room found for continuation from {previous_room_name}; using normal preference."
+                    f"No same or nearby room found that matches normal room preferences for continuation from "
+                    f"{previous_room_name}; using normal preference."
                 )
 
-        preferred = [r for r in rooms if any(kw in r.get("description", "") for kw in ["window", "natural light"])]
-        if preferred:
-            self._update_status(f"Found {len(preferred)} room(s) with windows/natural light!")
-            return preferred[0]
+        if window_rooms:
+            self._update_status(f"Found {len(window_rooms)} room(s) with windows/natural light!")
+            return window_rooms[0]
 
         self._update_status("No rooms with windows found, using first available room.")
         return rooms[0]
