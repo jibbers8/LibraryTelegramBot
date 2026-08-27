@@ -67,6 +67,85 @@ Initial bootstrap:
 2. Complete university login manually.
 3. Keep same profile directory for future unattended runs.
 
+## Deployed Google VM Operations
+
+The live Telegram bot is not using Chrome on the local Windows machine. It runs
+on a Google Compute Engine VM and uses a Chrome profile stored on that VM.
+
+Known deployment details:
+- Google Cloud project: `roombookertelegram`
+- Compute Engine VM: `instance-20260305-025624`
+- Zone: `us-west1-b`
+- Linux user that runs the bot: `yakachakalaka`
+- Repo path on VM: `/home/yakachakalaka/LibraryTelegramBot`
+- systemd service: `library-booker-bot.service`
+- Bot command: `python3 main.py --telegram`
+- Display server: `Xvfb :99`
+- Chrome profile used for UA/LibCal login:
+  `/home/yakachakalaka/.config/UALibraryBooker`
+- Chrome cache:
+  `/home/yakachakalaka/.cache/UALibraryBooker`
+
+Useful inspection commands from Windows:
+```powershell
+gcloud compute instances list --project roombookertelegram
+gcloud compute ssh instance-20260305-025624 --zone us-west1-b --project roombookertelegram
+```
+
+Useful inspection commands on the VM:
+```bash
+sudo systemctl status library-booker-bot.service --no-pager -l
+sudo journalctl -u library-booker-bot.service -n 120 --no-pager -o short-iso
+sudo -u yakachakalaka bash -lc 'cd /home/yakachakalaka/LibraryTelegramBot && git status -sb && git log --oneline --max-count=5'
+pgrep -af 'main.py --telegram|Xvfb|x11vnc|google-chrome|chromedriver'
+```
+
+### Refresh Expired UA Login
+
+If bookings start but cannot complete because the UA/LibCal login expired,
+refresh the login on the VM profile. Refreshing local Windows Chrome does not
+help the deployed Telegram bot.
+
+From Windows, pause the bot so it does not lock the Chrome profile:
+```powershell
+gcloud compute ssh instance-20260305-025624 --zone us-west1-b --project roombookertelegram --quiet --command 'bash -lc "sudo systemctl stop library-booker-bot.service; sudo pkill -u yakachakalaka -f chromedriver || true; sudo pkill -u yakachakalaka -f google-chrome || true; sudo pkill -u yakachakalaka -f chromium || true; sudo pkill -u yakachakalaka -f x11vnc || true"'
+```
+
+Start the VM desktop helpers and Chrome on the same profile the bot uses:
+```powershell
+gcloud compute ssh instance-20260305-025624 --zone us-west1-b --project roombookertelegram --quiet --command 'bash -lc "sudo -u yakachakalaka env DISPLAY=:99 nohup fluxbox >/tmp/library-booker-fluxbox.log 2>&1 & sudo -u yakachakalaka env DISPLAY=:99 nohup x11vnc -display :99 -localhost -rfbport 5900 -rfbauth /home/yakachakalaka/.vnc/passwd -forever -shared >/tmp/library-booker-x11vnc.log 2>&1 & sudo -u yakachakalaka env DISPLAY=:99 nohup google-chrome --user-data-dir=/home/yakachakalaka/.config/UALibraryBooker https://libcal.library.arizona.edu/ >/tmp/library-booker-chrome.log 2>&1 &"'
+```
+
+Open an SSH tunnel for TigerVNC:
+```powershell
+gcloud compute ssh instance-20260305-025624 --zone us-west1-b --project roombookertelegram --quiet --ssh-flag=-N --ssh-flag=-L --ssh-flag=5900:localhost:5900
+```
+
+Then connect TigerVNC to `localhost:5900`, complete the UA NetID/Duo login in
+remote Chrome, and close Chrome.
+
+If the VNC password is unknown, set a temporary one first. VNC auth only uses
+the first 8 characters, so keep it 8 characters or shorter. Do not commit real
+passwords or `.env` values to this repo:
+```powershell
+gcloud compute ssh instance-20260305-025624 --zone us-west1-b --project roombookertelegram --quiet --command 'bash -lc "sudo pkill -u yakachakalaka -f x11vnc || true; sudo -u yakachakalaka x11vnc -storepasswd TEMPVNC1 /home/yakachakalaka/.vnc/passwd; sudo chmod 600 /home/yakachakalaka/.vnc/passwd; sudo chown yakachakalaka:yakachakalaka /home/yakachakalaka/.vnc/passwd; sudo -u yakachakalaka env DISPLAY=:99 nohup x11vnc -display :99 -localhost -rfbport 5900 -rfbauth /home/yakachakalaka/.vnc/passwd -forever -shared >/tmp/library-booker-x11vnc.log 2>&1 &"'
+```
+
+After login, clean up the temporary desktop pieces and restart the bot:
+```powershell
+gcloud compute ssh instance-20260305-025624 --zone us-west1-b --project roombookertelegram --quiet --command 'bash -lc "sudo pkill -u yakachakalaka -f x11vnc || true; sudo pkill -u yakachakalaka -f google-chrome || true; sudo pkill -u yakachakalaka -f chromium || true; sudo pkill -u yakachakalaka -f fluxbox || true; sudo systemctl start library-booker-bot.service; sleep 5; sudo systemctl is-active library-booker-bot.service; sudo systemctl status library-booker-bot.service --no-pager -l | head -30"'
+```
+
+Successful reauthentication should update files such as:
+```bash
+/home/yakachakalaka/.config/UALibraryBooker/Default/Cookies
+/home/yakachakalaka/.config/UALibraryBooker/Default/History
+```
+
+The Telegram `/update` command runs `git pull` inside
+`/home/yakachakalaka/LibraryTelegramBot` and exits, relying on systemd to
+restart the bot.
+
 ## Signal Integration Status
 
 Signal is not enabled by default yet. A notifier interface and Signal stub are included so `signal-cli` can be added later without changing booking logic.
