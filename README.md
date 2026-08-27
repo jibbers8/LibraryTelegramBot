@@ -42,6 +42,22 @@ The project now supports:
    - `/book room for 4 people on Tuesday around 4pm`
    - `/status`
 
+## Room Continuation Preference
+
+After a successful booking, the bot records the date, time, and room in
+`state/recent_bookings.json`. On a later request for the same day that starts
+at or after a prior booking ends, the room selector treats it as a natural
+continuation:
+- Try the exact same room first.
+- If unavailable, try nearby rooms with the same room prefix and floor, within
+  5 room numbers. For example, after `B539`, prefer `B538` or `B540` before
+  unrelated qualifying rooms.
+- If no same or nearby room is available, fall back to the normal preference
+  for rooms with windows/natural light, then the first qualifying room.
+
+The `state/` directory is intentionally ignored by git because it contains
+runtime state such as approved Telegram chats and recent booking history.
+
 ## Free VM Recommendation (Best Reliability)
 
 For SSO-heavy sites, strict headless mode can be fragile. Prefer:

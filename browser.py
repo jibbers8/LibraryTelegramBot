@@ -1,7 +1,10 @@
 import time
 import os
 import subprocess
+import json
+import re
 from datetime import datetime
+from pathlib import Path
 from urllib.parse import urlencode
 from typing import Optional, Callable
 from selenium import webdriver
@@ -20,6 +23,7 @@ from parser import BookingRequest
 class BookingAutomation:
     BASE_URL = "https://libcal.library.arizona.edu"
 
+    NEARBY_ROOM_DISTANCE = 5
     CAPACITY_MAP = {"1": 2, "2": 5, "3": 12}
     ROOM_TYPE_MAP = {"quiet": "1393", "group": "1389", "video": "29391", "presentation": "29392"}
     TIME_RANGES = {
@@ -72,6 +76,7 @@ class BookingAutomation:
         interactive_mode: bool = True,
         keep_browser_open: bool = True,
         close_existing_browsers: bool = True,
+        history_path: Optional[Path] = None,
     ):
         self.driver: Optional[webdriver.Chrome] = None
         self.headless = headless
@@ -82,6 +87,8 @@ class BookingAutomation:
         self.close_existing_browsers = close_existing_browsers
         self.invalid_credentials_detected = False
         self.recurring_failed_dates: list[str] = []
+        self.successful_bookings: list[dict] = []
+        self.history_path = Path(history_path) if history_path else Path(__file__).resolve().parent / "state" / "recent_bookings.json"
 
     def _update_status(self, message: str):
         self.status_callback(message)
@@ -241,9 +248,128 @@ class BookingAutomation:
 
         return rooms
 
-    def _select_preferred_room(self, rooms: list[dict]) -> dict:
+    def _room_code(self, room_name: str) -> Optional[tuple[str, int]]:
+        normalized = (room_name or "").upper().replace("-", " ")
+        match = re.search(r"\b([A-Z]{1,3})\s*(\d{2,4})\b", normalized)
+        if not match:
+            return None
+        return match.group(1), int(match.group(2))
+
+    def _format_time_value(self, hour: Optional[int], minute: int = 0) -> Optional[str]:
+        if hour is None:
+            return None
+        return f"{hour:02d}:{minute:02d}"
+
+    def _time_to_minutes(self, time_value: Optional[str]) -> Optional[int]:
+        if not time_value:
+            return None
+        try:
+            hour, minute = time_value.split(":", 1)
+            return int(hour) * 60 + int(minute)
+        except ValueError:
+            return None
+
+    def _load_booking_history(self) -> list[dict]:
+        try:
+            if not self.history_path.exists():
+                return []
+            data = json.loads(self.history_path.read_text(encoding="utf-8"))
+            return data if isinstance(data, list) else []
+        except Exception:
+            return []
+
+    def _save_booking_history(self, history: list[dict]):
+        try:
+            self.history_path.parent.mkdir(parents=True, exist_ok=True)
+            self.history_path.write_text(json.dumps(history[-100:], indent=2), encoding="utf-8")
+        except Exception as exc:
+            self._update_status(f"Could not save booking history: {exc}")
+
+    def _record_successful_booking(self, request: BookingRequest, booking_date: datetime, room: dict):
+        start = self._format_time_value(request.start_hour, request.start_minute)
+        end = self._format_time_value(request.end_hour, request.end_minute)
+        room_name = room.get("name", "Unknown Room")
+        room_code = self._room_code(room_name)
+        record = {
+            "booked_at": datetime.now().isoformat(timespec="seconds"),
+            "date": booking_date.strftime("%Y-%m-%d"),
+            "start": start,
+            "end": end,
+            "room_name": room_name,
+            "room_code": f"{room_code[0]}{room_code[1]}" if room_code else None,
+            "capacity": request.capacity,
+            "room_type": request.room_type,
+        }
+        history = self._load_booking_history()
+        history.append(record)
+        self._save_booking_history(history)
+        self.successful_bookings.append(record)
+
+    def _find_continuation_booking(self, request: BookingRequest, booking_date: datetime) -> Optional[dict]:
+        current_start = self._time_to_minutes(self._format_time_value(request.start_hour, request.start_minute))
+        if current_start is None:
+            return None
+
+        date_key = booking_date.strftime("%Y-%m-%d")
+        candidates = []
+        for record in self._load_booking_history():
+            if record.get("date") != date_key or not record.get("room_name"):
+                continue
+            previous_end = self._time_to_minutes(record.get("end"))
+            if previous_end is None or previous_end > current_start:
+                continue
+            gap = current_start - previous_end
+            candidates.append((gap, record.get("booked_at", ""), record))
+
+        if not candidates:
+            return None
+
+        candidates.sort(key=lambda item: item[1], reverse=True)
+        candidates.sort(key=lambda item: item[0])
+        return candidates[0][2]
+
+    def _is_window_room(self, room: dict) -> bool:
+        return any(kw in room.get("description", "") for kw in ["window", "natural light"])
+
+    def _rank_continuation_room(self, room: dict, previous_room_name: str) -> tuple:
+        previous_code = self._room_code(previous_room_name)
+        current_code = self._room_code(room.get("name", ""))
+        if previous_code and current_code:
+            previous_prefix, previous_number = previous_code
+            current_prefix, current_number = current_code
+            distance = abs(current_number - previous_number)
+            same_floor = current_number // 100 == previous_number // 100
+            if current_prefix == previous_prefix and distance == 0:
+                return (0, 0)
+            if current_prefix == previous_prefix and same_floor and distance <= self.NEARBY_ROOM_DISTANCE:
+                return (1, distance)
+        return (3, 9999)
+
+    def _select_preferred_room(self, rooms: list[dict], request: BookingRequest = None, booking_date: datetime = None) -> dict:
         if not rooms:
             return None
+
+        if request is not None and booking_date is not None:
+            previous = self._find_continuation_booking(request, booking_date)
+            if previous:
+                previous_room_name = previous.get("room_name", "")
+                ranked = sorted(
+                    enumerate(rooms),
+                    key=lambda item: (
+                        *self._rank_continuation_room(item[1], previous_room_name),
+                        0 if self._is_window_room(item[1]) else 1,
+                        item[0],
+                    ),
+                )
+                best_group = self._rank_continuation_room(ranked[0][1], previous_room_name)[0]
+                if best_group < 3:
+                    self._update_status(
+                        f"Prioritizing continuation from {previous_room_name}: selected {ranked[0][1]['name']}."
+                    )
+                    return ranked[0][1]
+                self._update_status(
+                    f"No same or nearby room found for continuation from {previous_room_name}; using normal preference."
+                )
 
         preferred = [r for r in rooms if any(kw in r.get("description", "") for kw in ["window", "natural light"])]
         if preferred:
@@ -322,7 +448,7 @@ class BookingAutomation:
             self._update_status(f"{prefix}No available rooms found for {date_str}.")
             return False
 
-        room = self._select_preferred_room(rooms)
+        room = self._select_preferred_room(rooms, request, booking_date)
         self._update_status(f"{prefix}Booking: {room['name']}")
 
         try:
@@ -339,6 +465,7 @@ class BookingAutomation:
             for _ in range(3):
                 if self.complete_booking():
                     self._update_status(f"{prefix}Successfully booked {room['name']} for {date_str}!")
+                    self._record_successful_booking(request, booking_date, room)
                     return True
                 time.sleep(2)
 
